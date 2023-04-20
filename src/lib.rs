@@ -1,3 +1,5 @@
+pub mod nominal;
+
 /** A de Bruijn index.
 
 Denoted by `#0`, `#1`, `#2`, etc.
