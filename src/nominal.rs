@@ -6,7 +6,7 @@ lazy_static! {
     static ref COUNTER: AtomicU64 = AtomicU64::new(0);
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Atom {
     value: u64,
 }
@@ -20,14 +20,14 @@ fn fresh() -> Atom {
 mod name {
     use super::Atom;
 
-    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
     pub enum Name<N> {
         Name(N),
         Atom(Atom),
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct Name<N> {
     value: name::Name<N>,
 }
