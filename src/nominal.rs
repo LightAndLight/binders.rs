@@ -3,7 +3,6 @@ pub mod binder;
 pub mod name;
 pub mod permutation;
 pub mod permuting;
-pub mod rename;
 pub mod subst;
 pub mod support;
 
@@ -24,7 +23,10 @@ impl<'a, T: Nominal> Nominal for Permuting<'a, T> {}
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
+    use std::{
+        collections::{HashMap, HashSet},
+        io::Write,
+    };
 
     use crate::nominal::{
         alpha_eq::AlphaEq,
@@ -32,7 +34,6 @@ mod test {
         name::Name,
         permutation::{Permutation, Permute},
         permuting::Permuting,
-        rename::Rename,
         subst::Subst,
         support::Support,
         Nominal,
@@ -55,21 +56,6 @@ mod test {
                 Expr::App(a, b) => {
                     a.permute_mut(permutation);
                     b.permute_mut(permutation);
-                }
-            }
-        }
-    }
-
-    impl Rename for Expr {
-        fn rename_mut(&mut self, f: &dyn Fn(&mut Name)) {
-            match self {
-                Expr::Var(name) => {
-                    f(name);
-                }
-                Expr::Lam(_label, binder) => binder.rename_mut(f),
-                Expr::App(a, b) => {
-                    a.rename_mut(f);
-                    b.rename_mut(f);
                 }
             }
         }
@@ -148,6 +134,42 @@ mod test {
         }
     }
 
+    impl Expr {
+        fn print(&self, names: &mut HashMap<Name, String>, buffer: &mut dyn Write) {
+            match self {
+                Expr::Var(name) => buffer
+                    .write_all(names.get(name).unwrap().as_bytes())
+                    .unwrap(),
+                Expr::Lam(label, binder) => {
+                    buffer.write_all("\\".as_bytes()).unwrap();
+                    buffer.write_all(label.as_bytes()).unwrap();
+                    buffer.write_all(" -> ".as_bytes()).unwrap();
+
+                    binder.fold(|name, body| {
+                        names.insert(name, label.clone());
+                        body.print(names, buffer);
+                        names.remove(&name);
+                    });
+                }
+                Expr::App(a, b) => {
+                    if matches!(a.as_ref(), Expr::Lam { .. } | Expr::App(_, _)) {
+                        buffer.write_all("(".as_bytes()).unwrap();
+                    }
+
+                    a.print(names, buffer);
+
+                    if matches!(a.as_ref(), Expr::Lam { .. } | Expr::App(_, _)) {
+                        buffer.write_all(")".as_bytes()).unwrap();
+                    }
+
+                    buffer.write_all(" ".as_bytes()).unwrap();
+
+                    b.print(names, buffer);
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_1() {
         let expr1 = Expr::Lam(String::from("x"), Box::new(Binder::new(Expr::Var)));
@@ -192,11 +214,26 @@ mod test {
         let expr2 = Expr::Lam(
             String::from("y"),
             Box::new(Binder::new(|y| {
-                #[allow(clippy::redundant_closure)]
                 Expr::Lam(String::from("x"), Box::new(Binder::new(|_x| Expr::Var(y))))
             })),
         );
 
         assert!(expr1.alpha_eq(&expr2));
+    }
+
+    #[test]
+    fn print_1() {
+        // \x -> \y -> x
+        let expr = Expr::Lam(
+            String::from("x"),
+            Box::new(Binder::new(|x| {
+                Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+            })),
+        );
+
+        let mut names = HashMap::new();
+        let mut buffer = Vec::new();
+        expr.print(&mut names, &mut buffer);
+        assert_eq!(buffer, "\\x -> \\y -> x".as_bytes())
     }
 }

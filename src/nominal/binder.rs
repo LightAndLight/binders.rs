@@ -5,7 +5,6 @@ use super::{
     name::{fresh, Name},
     permutation::{Permutation, Permute},
     permuting::Permuting,
-    rename::Rename,
     subst::Subst,
     support::Support,
 };
@@ -20,22 +19,6 @@ impl<T: Permute> Permute for Binder<T> {
     fn permute_mut(&mut self, permutation: &Permutation) {
         self.name.permute_mut(permutation);
         self.body.permute_mut(permutation);
-    }
-}
-
-impl<T: Rename> Rename for Binder<T> {
-    fn rename_mut(&mut self, f: &dyn Fn(&mut Name)) {
-        let old_name = self.name;
-        let new_name = fresh();
-
-        self.name = new_name;
-        self.body.rename_mut(&|name| {
-            if *name == old_name {
-                *name = new_name;
-            } else {
-                f(name);
-            }
-        });
     }
 }
 
@@ -110,6 +93,10 @@ impl<T> Binder<T> {
             name,
             body: f(name),
         }
+    }
+
+    pub fn fold<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
+        f(self.name, &self.body)
     }
 }
 
