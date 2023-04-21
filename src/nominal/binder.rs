@@ -15,6 +15,18 @@ pub struct Binder<T> {
     body: T,
 }
 
+impl<T: Clone + Permute> Clone for Binder<T> {
+    fn clone(&self) -> Self {
+        self.fold(|name, body| {
+            Binder::new(|new_name| {
+                let mut body = body.clone();
+                body.permute_mut(&Permutation::swap(name, new_name));
+                body
+            })
+        })
+    }
+}
+
 impl<T: Permute> Permute for Binder<T> {
     fn permute_mut(&mut self, permutation: &Permutation) {
         self.name.permute_mut(permutation);
