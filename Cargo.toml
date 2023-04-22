@@ -1,5 +1,5 @@
 [package]
-name = "debruijn"
+name = "nominal-sets"
 version = "0.1.0"
 edition = "2021"
 
