@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::nominal::name::Name;
+use crate::name::Name;
 
 use super::Permuting;
 
@@ -77,7 +77,7 @@ mod test {
     use std::borrow::Cow;
 
     use super::AlphaEq;
-    use crate::nominal::{name::fresh, permutation::Permutation, permuting::Permuting};
+    use crate::{name::fresh, permutation::Permutation, permuting::Permuting};
 
     #[test]
     fn test_1() {

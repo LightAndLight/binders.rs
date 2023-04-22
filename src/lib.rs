@@ -1,498 +1,480 @@
-pub mod nominal;
-
-/** A de Bruijn index.
-
-Denoted by `#0`, `#1`, `#2`, etc.
-*/
-#[derive(Debug)]
-pub struct Index {
-    value: usize,
-}
-
-impl Index {
-    fn value(&self) -> usize {
-        self.value
-    }
-}
-
-pub trait Context {
-    type Item;
-    fn new() -> Self;
-    fn len(&self) -> usize;
-    fn push(&mut self, value: Self::Item);
-    fn pop(&mut self);
-    fn get_level<'a>(&'a self, level: &Level) -> &'a Self::Item;
-}
-
-pub trait ContextExt: Context {
-    fn get_index<'a>(&'a self, var: &Index) -> &'a Self::Item;
-}
-
-impl<C: Context> ContextExt for C {
-    /** When new context entries are added to the end of a context, then de Bruijn indices
-    can be seen as indexing the context from the end. When this is the case, it's very naturally
-    implemented in terms of de Bruijn levels.
-    */
-    fn get_index<'a>(&'a self, var: &Index) -> &'a Self::Item {
-        let level = Depth { value: self.len() }.index_to_level(var);
-
-        self.get_level(&level)
-    }
-}
-
-mod context {
-    use super::{Context, Level};
-
-    /** A context.
-
-    Denoted by `[a, b, ..., z]`.
-    */
-    pub struct Sequence<A> {
-        value: Vec<A>,
-    }
-
-    impl<A> Context for Sequence<A> {
-        type Item = A;
-
-        fn new() -> Self {
-            Self { value: vec![] }
-        }
-
-        fn len(&self) -> usize {
-            self.value.len()
-        }
-
-        fn push(&mut self, value: A) {
-            self.value.push(value)
-        }
-
-        fn pop(&mut self) {
-            self.value.pop();
-        }
-
-        /** When new context entries are added to the end of a context, then de Bruijn level
-        can be seen as indexing the context from the start.
-        */
-        fn get_level(&self, level: &Level) -> &A {
-            &self.value[level.value - 1]
-        }
-    }
-
-    pub struct Ignore {
-        len: usize,
-    }
-
-    impl Context for Ignore {
-        type Item = ();
-
-        fn new() -> Self {
-            Self { len: 0 }
-        }
-
-        fn len(&self) -> usize {
-            self.len
-        }
-
-        fn push(&mut self, (): ()) {
-            self.len += 1;
-        }
-
-        fn pop(&mut self) {
-            self.len -= 1;
-        }
-
-        fn get_level<'a>(&'a self, _level: &Level) -> &'a Self::Item {
-            &()
-        }
-    }
-}
-
-/** A binding form.
-
-Allows the inner type `T` to refer to an additional variable.
-*/
-#[derive(Debug)]
-pub struct Binder<T> {
-    body: T,
-}
-
-impl<'a, T, U> Binder<(&'a T, &'a U)> {
-    pub fn pair(left: &'a Binder<T>, right: &'a Binder<U>) -> Self {
-        Binder {
-            body: (&left.body, &right.body),
-        }
-    }
-}
-
-impl<T: Eq> PartialEq for Binder<T> {
-    /** Equality assumes that any [`Index`]s in the left and right hand sides
-    index the same context. We pretend to judge them both against a single
-    "open" context:
-
-    ```ignore
-    let mut context = Open::new();
-    Binder::pair(self, other).elim(&mut context, (), |context, (t1, t2)| t1 == t2)
-    ```
-    */
-    fn eq(&self, other: &Self) -> bool {
-        self.body == other.body
-    }
-}
-
-impl<T: Eq> Eq for Binder<T> {}
-
-/** A de Bruijn level.
-
-A de Bruijn level can be thought of a de Bruijn index "placed in context". This is denoted by `[_, _, ..., _]#n`,
-where `n` is a de Bruijn index.
-*/
-#[derive(Debug, Clone, Copy)]
-pub struct Level {
-    value: usize,
-}
-
-impl Level {
-    pub fn value(&self) -> usize {
-        self.value
-    }
-
-    /** De Bruijn indices, insofar as they represent variables, aren't comparable in isolation.
-    Syntactically, indices `#0` and `#1` might be different, but *semantically* they can represent the
-    same variable under different contexts. For example, `get([a], #0)` and `get([a, b], #1)` will return
-    the same result because they're the same variable.
-
-    [`Level`]s take into account the context, so equality of [`Level`]s is also equality of variables.
-    */
-    fn eq(&self, other: &Level) -> bool {
-        self.value == other.value
-    }
-}
-
-impl PartialEq for Level {
-    fn eq(&self, other: &Self) -> bool {
-        Level::eq(self, other)
-    }
-}
-
-impl Eq for Level {}
-
-/// The abstract notion of a variable.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Var {
-    value: Level,
-}
-
-impl Var {
-    pub fn as_level<C: Context>(&self, _context: &C) -> Level {
-        Level {
-            value: self.value.value,
-        }
-    }
-
-    pub fn as_index<C: Context>(&self, context: &C) -> Index {
-        Depth {
-            value: context.len(),
-        }
-        .level_to_index(&self.value)
-    }
-}
-
-pub struct Depth {
-    value: usize,
-}
-
-/**
-At any specific binding depth, [`Index`]s and [`Level`]s are isomorphic (as long as the
-[`Level`]s do not exceed the depth).
-*/
-impl Depth {
-    pub fn index_to_level(&self, var: &Index) -> Level {
-        Level {
-            value: self.value - var.value,
-        }
-    }
-
-    pub fn level_to_index(&self, level: &Level) -> Index {
-        Index {
-            value: self.value - level.value,
-        }
-    }
-}
-
-pub struct Scope {
-    depth: Depth,
-}
-
-impl Scope {
-    pub fn new() -> Self {
-        Self {
-            depth: Depth { value: 0 },
-        }
-    }
-
-    /**
-    [`Binder`] introduction.
-
-    ```rust
-    use debruijn::Scope;
-
-    let mut scope = Scope::new();
-    let _ = scope.binder(|scope, x| scope.binder(|scope, y| (x, y)));
-    ```
-    */
-    pub fn binder<T, F: Fn(&mut Scope, Var) -> T>(&mut self, f: F) -> Binder<T> {
-        self.depth.value += 1;
-
-        let var = Var {
-            value: Level {
-                value: self.depth.value,
-            },
-        };
-        let body = f(self, var);
-
-        self.depth.value -= 1;
-
-        Binder { body }
-    }
-}
-
-impl Default for Scope {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<T> Binder<T> {
-    pub fn elim<A, R, C: Context<Item = A>, F: Fn(&mut C, T) -> R>(
-        self,
-        context: &mut C,
-        value: A,
-        f: F,
-    ) -> R {
-        context.push(value);
-        let result = f(context, self.body);
-        context.pop();
-        result
-    }
-
-    pub fn elim_ref<A, R, C: Context<Item = A>, F: FnOnce(&mut C, &T) -> R>(
-        &self,
-        context: &mut C,
-        value: A,
-        f: F,
-    ) -> R {
-        context.push(value);
-        let result = f(context, &self.body);
-        context.pop();
-        result
-    }
-}
-
-pub trait Subst<Value> {
-    fn subst(self, target: Var, replacement: Value) -> Self;
-    fn subst_mut(&mut self, target: Var, replacement: Value);
-}
-
-impl<Value, T: Subst<Value>> Subst<Value> for Binder<T> {
-    fn subst(self, target: Var, replacement: Value) -> Self {
-        todo!()
-    }
-
-    fn subst_mut(&mut self, target: Var, replacement: Value) {
-        todo!()
-    }
-}
-
-/*
-pub trait Subst<Name, Value> {
-    fn subst(self, target: Name, replacement: Value) -> Self;
-    fn subst_mut(&mut self, target: Name, replacement: Value);
-}
-
-mod system_f {
-    use super::Subst;
-
-    struct ExprName;
-    struct Expr;
-
-    struct TypeName;
-    struct Type;
-
-    impl Subst<ExprName, Expr> for Expr {
-        fn subst(self, target: ExprName, replacement: Expr) -> Self {
-            todo!()
-        }
-
-        fn subst_mut(&mut self, target: ExprName, replacement: Expr) {
-            todo!()
-        }
-    }
-
-    impl Subst<TypeName, Type> for Expr {
-        fn subst(self, target: TypeName, replacement: Type) -> Self {
-            todo!()
-        }
-
-        fn subst_mut(&mut self, target: TypeName, replacement: Type) {
-            todo!()
-        }
-    }
-
-    impl Subst<TypeName, Type> for Type {
-        fn subst(self, target: TypeName, replacement: Type) -> Self {
-            todo!()
-        }
-
-        fn subst_mut(&mut self, target: TypeName, replacement: Type) {
-            todo!()
-        }
-    }
-}
-*/
+pub mod alpha_eq;
+pub mod binder;
+pub mod name;
+pub mod permutation;
+pub mod permuting;
+pub mod subst;
+pub mod support;
+
+use std::collections::HashSet;
+
+use binder::Binder;
+use name::Name;
+use permutation::Permute;
+use permuting::Permuting;
+use support::Support;
+
+pub trait Nominal: Permute + Support {}
+
+impl Nominal for Name {}
+impl<T: Eq + std::hash::Hash + Nominal> Nominal for HashSet<T> {}
+impl<T: Nominal> Nominal for Binder<T> {}
+impl<'a, T: Nominal> Nominal for Permuting<'a, T> {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod test {
+    mod lambda_calculus {
+        use std::{
+            collections::{HashMap, HashSet},
+            io::Write,
+        };
 
-    #[derive(Debug)]
-    enum Expr {
-        Var(Var),
-        Lam(String, Box<Binder<Expr>>),
-        App(Box<Expr>, Box<Expr>),
-    }
+        use crate::{
+            alpha_eq::AlphaEq,
+            binder::Binder,
+            name::Name,
+            permutation::{Permutation, Permute},
+            permuting::Permuting,
+            subst::Subst,
+            support::Support,
+            Nominal,
+        };
 
-    fn print_dbi(buffer: &mut String, context: &mut context::Ignore, expr: &Expr) {
-        use std::fmt::Write;
+        #[derive(Debug, PartialEq, Eq)]
+        enum Expr {
+            Var(Name),
+            Lam(String, Box<Binder<Expr>>),
+            App(Box<Expr>, Box<Expr>),
+        }
 
-        match expr {
-            Expr::Var(var) => {
-                buffer.push('#');
-                write!(buffer, "{:?}", var.as_index(context).value()).unwrap();
+        impl Permute for Expr {
+            fn permute_mut(&mut self, permutation: &Permutation) {
+                match self {
+                    Expr::Var(name) => {
+                        permutation.apply_mut(name);
+                    }
+                    Expr::Lam(_label, binder) => binder.permute_mut(permutation),
+                    Expr::App(a, b) => {
+                        a.permute_mut(permutation);
+                        b.permute_mut(permutation);
+                    }
+                }
             }
-            Expr::Lam(_name, scope) => scope.elim_ref(context, (), |context, body| {
-                buffer.push_str("lam(");
-                print_dbi(buffer, context, body);
-                buffer.push(')');
-            }),
-            Expr::App(a, b) => {
-                buffer.push_str("app(");
-                print_dbi(buffer, context, a);
-                buffer.push(',');
-                print_dbi(buffer, context, b);
-                buffer.push(')');
+        }
+
+        impl Subst<Expr> for Expr {
+            fn name(name: Name) -> Expr {
+                Expr::Var(name)
             }
+
+            fn subst_mut(&mut self, f: &dyn Fn(Name, &mut Expr)) {
+                match self {
+                    Expr::Var(name) => {
+                        f(*name, self);
+                    }
+                    Expr::Lam(_label, binder) => binder.subst_mut(f),
+                    Expr::App(a, b) => {
+                        a.subst_mut(f);
+                        b.subst_mut(f);
+                    }
+                }
+            }
+        }
+
+        impl Support for Expr {
+            fn support(&self) -> HashSet<Name> {
+                match self {
+                    Expr::Var(name) => HashSet::from([*name]),
+                    Expr::Lam(_label, binder) => binder.support(),
+                    Expr::App(a, b) => {
+                        let mut support = a.support();
+                        support.extend(b.support());
+                        support
+                    }
+                }
+            }
+        }
+
+        impl Nominal for Expr {}
+
+        impl AlphaEq for Expr {
+            fn alpha_eq_under(a: Permuting<&Expr>, b: Permuting<&Expr>) -> bool {
+                match (a.value, b.value) {
+                    (Expr::Var(name1), Expr::Var(name2)) => Name::alpha_eq_under(
+                        Permuting {
+                            permutation: a.permutation,
+                            value: name1,
+                        },
+                        Permuting {
+                            permutation: b.permutation,
+                            value: name2,
+                        },
+                    ),
+                    (Expr::Lam(_, binder1), Expr::Lam(_, binder2)) => Binder::alpha_eq_under(
+                        Permuting {
+                            permutation: a.permutation,
+                            value: binder1,
+                        },
+                        Permuting {
+                            permutation: b.permutation,
+                            value: binder2,
+                        },
+                    ),
+                    (Expr::App(left1, right1), Expr::App(left2, right2)) => {
+                        <(_, _)>::alpha_eq_under(
+                            Permuting {
+                                permutation: a.permutation,
+                                value: &(left1, right1),
+                            },
+                            Permuting {
+                                permutation: b.permutation,
+                                value: &(left2, right2),
+                            },
+                        )
+                    }
+                    _ => false,
+                }
+            }
+        }
+
+        impl Expr {
+            fn print(&self, names: &mut HashMap<Name, String>, buffer: &mut dyn Write) {
+                match self {
+                    Expr::Var(name) => buffer
+                        .write_all(names.get(name).unwrap().as_bytes())
+                        .unwrap(),
+                    Expr::Lam(label, binder) => {
+                        buffer.write_all("\\".as_bytes()).unwrap();
+                        buffer.write_all(label.as_bytes()).unwrap();
+                        buffer.write_all(" -> ".as_bytes()).unwrap();
+
+                        binder.fold(|name, body| {
+                            names.insert(name, label.clone());
+                            body.print(names, buffer);
+                            names.remove(&name);
+                        });
+                    }
+                    Expr::App(a, b) => {
+                        if matches!(a.as_ref(), Expr::Lam { .. } | Expr::App(_, _)) {
+                            buffer.write_all("(".as_bytes()).unwrap();
+                        }
+
+                        a.print(names, buffer);
+
+                        if matches!(a.as_ref(), Expr::Lam { .. } | Expr::App(_, _)) {
+                            buffer.write_all(")".as_bytes()).unwrap();
+                        }
+
+                        buffer.write_all(" ".as_bytes()).unwrap();
+
+                        b.print(names, buffer);
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_1() {
+            let expr1 = Expr::Lam(String::from("x"), Box::new(Binder::new(Expr::Var)));
+            let expr2 = Expr::Lam(String::from("y"), Box::new(Binder::new(Expr::Var)));
+
+            assert!(expr1.alpha_eq(&expr2));
+        }
+
+        #[test]
+        fn test_2() {
+            // \x -> \y -> x
+            let expr1 = Expr::Lam(
+                String::from("x"),
+                Box::new(Binder::new(|x| {
+                    Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+                })),
+            );
+
+            // \x -> \y -> y
+            let expr2 = Expr::Lam(
+                String::from("x"),
+                Box::new(Binder::new(|_x| {
+                    #[allow(clippy::redundant_closure)]
+                    Expr::Lam(String::from("y"), Box::new(Binder::new(|y| Expr::Var(y))))
+                })),
+            );
+
+            assert!(!expr1.alpha_eq(&expr2));
+        }
+
+        #[test]
+        fn test_3() {
+            // \x -> \y -> x
+            let expr1 = Expr::Lam(
+                String::from("x"),
+                Box::new(Binder::new(|x| {
+                    Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+                })),
+            );
+
+            // \y -> \x -> y
+            let expr2 = Expr::Lam(
+                String::from("y"),
+                Box::new(Binder::new(|y| {
+                    Expr::Lam(String::from("x"), Box::new(Binder::new(|_x| Expr::Var(y))))
+                })),
+            );
+
+            assert!(expr1.alpha_eq(&expr2));
+        }
+
+        #[test]
+        fn print_1() {
+            // \x -> \y -> x
+            let expr = Expr::Lam(
+                String::from("x"),
+                Box::new(Binder::new(|x| {
+                    Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+                })),
+            );
+
+            let mut names = HashMap::new();
+            let mut buffer = Vec::new();
+            expr.print(&mut names, &mut buffer);
+            assert_eq!(buffer, "\\x -> \\y -> x".as_bytes())
         }
     }
 
-    #[test]
-    fn print_dbi_1() {
-        let mut scope = Scope::new();
-        let expr = Expr::Lam(
-            String::new(),
-            Box::new(scope.binder(|scope, x| {
-                Expr::Lam(
-                    String::new(),
-                    Box::new(scope.binder(|_scope, y| {
-                        Expr::App(Box::new(Expr::Var(x)), Box::new(Expr::Var(y)))
-                    })),
-                )
-            })),
-        );
+    mod system_f {
+        use std::collections::HashMap;
 
-        let mut buffer = String::new();
-        let mut context = Context::new();
-        print_dbi(&mut buffer, &mut context, &expr);
-        assert_eq!(buffer, "lam(lam(app(#1,#0)))")
-    }
+        use crate::{
+            binder::Binder,
+            name::Name,
+            permutation::{Permutation, Permute},
+            subst::Subst,
+        };
 
-    #[test]
-    fn print_dbi_2() {
-        let mut scope = Scope::new();
-        let expr = Expr::Lam(
-            String::new(),
-            Box::new(scope.binder(|scope, x| {
-                Expr::App(
-                    Box::new(Expr::Var(x)),
-                    Box::new(Expr::Lam(
-                        String::new(),
-                        Box::new(scope.binder(|_scope, y| {
-                            Expr::App(Box::new(Expr::Var(x)), Box::new(Expr::Var(y)))
-                        })),
-                    )),
-                )
-            })),
-        );
+        #[derive(Debug, PartialEq, Eq, Clone)]
+        enum Kind {
+            Type,
+            Arrow(Box<Kind>, Box<Kind>),
+        }
 
-        let mut buffer = String::new();
-        let mut context = Context::new();
-        print_dbi(&mut buffer, &mut context, &expr);
-        assert_eq!(buffer, "lam(app(#0,lam(app(#1,#0))))")
-    }
+        #[derive(Debug, PartialEq, Eq, Clone)]
+        enum Type {
+            Var(Name),
+            Forall(String, Kind, Box<Binder<Type>>),
+            Arrow,
+            App(Box<Type>, Box<Type>),
+        }
 
-    fn print_named(buffer: &mut String, context: &mut context::Sequence<String>, expr: &Expr) {
-        match expr {
-            Expr::Var(var) => {
-                buffer.push_str(context.get_level(&var.as_level(context)));
-            }
-            Expr::Lam(name, scope) => scope.elim_ref(context, name.clone(), |context, body| {
-                buffer.push_str("lam(");
-                buffer.push_str(name);
-                buffer.push(',');
-                print_named(buffer, context, body);
-                buffer.push(')');
-            }),
-            Expr::App(a, b) => {
-                buffer.push_str("app(");
-                print_named(buffer, context, a);
-                buffer.push(',');
-                print_named(buffer, context, b);
-                buffer.push(')');
+        impl Permute for Type {
+            fn permute_mut(&mut self, permutation: &Permutation) {
+                match self {
+                    Type::Var(name) => {
+                        name.permute_mut(permutation);
+                    }
+                    Type::Forall(_name, _kind, binder) => {
+                        binder.permute_mut(permutation);
+                    }
+                    Type::Arrow => {}
+                    Type::App(a, b) => {
+                        a.permute_mut(permutation);
+                        b.permute_mut(permutation);
+                    }
+                }
             }
         }
-    }
 
-    #[test]
-    fn print_named_1() {
-        let mut scope = Scope::new();
-        let expr = Expr::Lam(
-            String::from("x"),
-            Box::new(scope.binder(|scope, x| {
-                Expr::Lam(
-                    String::from("y"),
-                    Box::new(scope.binder(|_scope, y| {
-                        Expr::App(Box::new(Expr::Var(x)), Box::new(Expr::Var(y)))
-                    })),
-                )
-            })),
-        );
+        impl Subst<Type> for Type {
+            fn name(name: Name) -> Type {
+                Type::Var(name)
+            }
 
-        let mut buffer = String::new();
-        let mut context = Context::new();
-        print_named(&mut buffer, &mut context, &expr);
-        assert_eq!(buffer, "lam(x,lam(y,app(x,y)))")
-    }
+            fn subst_mut(&mut self, f: &dyn Fn(Name, &mut Type)) {
+                match self {
+                    Type::Var(name) => {
+                        f(*name, self);
+                    }
+                    Type::Forall(_name, _kind, binder) => {
+                        binder.subst_mut(f);
+                    }
+                    Type::Arrow => {}
+                    Type::App(a, b) => {
+                        a.subst_mut(f);
+                        b.subst_mut(f);
+                    }
+                }
+            }
+        }
 
-    #[test]
-    fn print_named_2() {
-        let mut scope = Scope::new();
-        let expr = Expr::Lam(
-            String::from("x"),
-            Box::new(scope.binder(|scope, x| {
-                Expr::App(
-                    Box::new(Expr::Var(x)),
-                    Box::new(Expr::Lam(
-                        String::from("y"),
-                        Box::new(scope.binder(|_scope, y| {
-                            Expr::App(Box::new(Expr::Var(x)), Box::new(Expr::Var(y)))
-                        })),
-                    )),
-                )
-            })),
-        );
+        #[derive(Debug, PartialEq, Eq, Clone)]
+        enum Expr {
+            Var(Name),
+            Lam(String, Type, Box<Binder<Expr>>),
+            App(Box<Expr>, Box<Expr>),
+            TyLam(String, Kind, Box<Binder<Expr>>),
+            TyApp(Box<Expr>, Type),
+        }
 
-        let mut buffer = String::new();
-        let mut context = Context::new();
-        print_named(&mut buffer, &mut context, &expr);
-        assert_eq!(buffer, "lam(x,app(x,lam(y,app(x,y))))")
+        impl Permute for Expr {
+            fn permute_mut(&mut self, permutation: &Permutation) {
+                match self {
+                    Expr::Var(name) => {
+                        name.permute_mut(permutation);
+                    }
+                    Expr::Lam(_name, _ty, binder) => binder.permute_mut(permutation),
+                    Expr::App(a, b) => {
+                        a.permute_mut(permutation);
+                        b.permute_mut(permutation);
+                    }
+                    Expr::TyLam(_name, _kind, binder) => {
+                        binder.permute_mut(permutation);
+                    }
+                    Expr::TyApp(expr, _ty) => {
+                        expr.permute_mut(permutation);
+                    }
+                }
+            }
+        }
+
+        impl Subst<Type> for Expr {
+            fn name(name: Name) -> Type {
+                Type::Var(name)
+            }
+
+            fn subst_mut(&mut self, f: &dyn Fn(Name, &mut Type)) {
+                match self {
+                    Expr::Var(_) => {}
+                    Expr::Lam(_name, ty, binder) => {
+                        ty.subst_mut(f);
+                        binder.subst_mut(f);
+                    }
+                    Expr::App(a, b) => {
+                        a.subst_mut(f);
+                        b.subst_mut(f);
+                    }
+                    Expr::TyLam(_name, _kind, binder) => {
+                        binder.subst_mut(f);
+                    }
+                    Expr::TyApp(expr, ty) => {
+                        expr.subst_mut(f);
+                        ty.subst_mut(f);
+                    }
+                }
+            }
+        }
+
+        impl Subst<Expr> for Expr {
+            fn name(name: Name) -> Expr {
+                Expr::Var(name)
+            }
+
+            fn subst_mut(&mut self, f: &dyn Fn(Name, &mut Expr)) {
+                match self {
+                    Expr::Var(name) => {
+                        f(*name, self);
+                    }
+                    Expr::Lam(_name, _ty, binder) => binder.subst_mut(f),
+                    Expr::App(a, b) => {
+                        a.subst_mut(f);
+                        b.subst_mut(f);
+                    }
+                    Expr::TyLam(_name, _kind, binder) => {
+                        binder.subst_mut(f);
+                    }
+                    Expr::TyApp(expr, _ty) => {
+                        expr.subst_mut(f);
+                    }
+                }
+            }
+        }
+
+        enum InferError {
+            VarNotInScope { variable: String },
+            TypeVarNotInScope { variable: String },
+            KindMismatch { expected_kind: Kind, got_kind: Kind },
+            ExpectedArrowKind { got_kind: Kind },
+        }
+
+        fn infer_kind(
+            variables: &mut HashMap<Name, String>,
+            kinds: &mut HashMap<Name, Kind>,
+            ty: &Type,
+        ) -> Result<Kind, InferError> {
+            match ty {
+                Type::Var(name) => match kinds.get(name) {
+                    Some(kind) => Ok(kind.clone()),
+                    None => Err(InferError::TypeVarNotInScope {
+                        variable: variables.get(name).unwrap().clone(),
+                    }),
+                },
+                Type::Forall(var, kind, binder) => binder.fold(|name, body| {
+                    variables.insert(name, var.clone());
+                    kinds.insert(name, kind.clone());
+                    let result = infer_kind(variables, kinds, body)?;
+                    kinds.remove(&name);
+                    variables.remove(&name);
+
+                    match result {
+                        Kind::Type => Ok(Kind::Type),
+                        _ => Err(InferError::KindMismatch {
+                            expected_kind: Kind::Type,
+                            got_kind: result,
+                        }),
+                    }
+                }),
+                Type::Arrow => Ok(Kind::Arrow(Box::new(Kind::Type), Box::new(Kind::Type))),
+                Type::App(a, b) => {
+                    let a_kind = infer_kind(variables, kinds, a)?;
+                    match a_kind {
+                        Kind::Arrow(in_kind, out_kind) => {
+                            let b_kind = infer_kind(variables, kinds, b)?;
+                            if in_kind.as_ref() == &b_kind {
+                                Ok(*out_kind)
+                            } else {
+                                Err(InferError::KindMismatch {
+                                    expected_kind: *in_kind,
+                                    got_kind: b_kind,
+                                })
+                            }
+                        }
+                        _ => Err(InferError::ExpectedArrowKind { got_kind: a_kind }),
+                    }
+                }
+            }
+        }
+
+        fn infer_type(
+            variables: &mut HashMap<Name, String>,
+            kinds: &mut HashMap<Name, Kind>,
+            types: &mut HashMap<Name, Type>,
+            expr: &Expr,
+        ) -> Result<Type, InferError> {
+            match expr {
+                Expr::Var(name) => match types.get(name) {
+                    Some(ty) => Ok(ty.clone()),
+                    None => Err(InferError::VarNotInScope {
+                        variable: variables.get(name).unwrap().clone(),
+                    }),
+                },
+                Expr::Lam(var, in_ty, binder) => binder.fold(|name, body| {
+                    variables.insert(name, var.clone());
+                    types.insert(name, in_ty.clone());
+                    let out_ty = infer_type(variables, kinds, types, body)?;
+                    types.remove(&name);
+                    variables.remove(&name);
+
+                    Ok(Type::App(
+                        Box::new(Type::App(Box::new(Type::Arrow), Box::new(in_ty.clone()))),
+                        Box::new(out_ty),
+                    ))
+                }),
+                Expr::App(a, b) => {
+                    let a_ty = infer_type(variables, kinds, types, a)?;
+                    let b_ty = infer_type(variables, kinds, types, b)?;
+                    todo!();
+                }
+                Expr::TyLam(_, _, _) => todo!(),
+                Expr::TyApp(_, _) => todo!(),
+            }
+        }
     }
 }

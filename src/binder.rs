@@ -108,6 +108,8 @@ impl<T> Binder<T> {
     }
 
     pub fn fold<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
+        // I think this should generate a fresh name, but it seems inconvenient
+        // to work with a `Permuting<&T>` instead of a `&T`.
         f(self.name, &self.body)
     }
 }
@@ -115,7 +117,7 @@ impl<T> Binder<T> {
 #[cfg(test)]
 mod test {
     use super::Binder;
-    use crate::nominal::alpha_eq::AlphaEq;
+    use crate::alpha_eq::AlphaEq;
 
     #[test]
     fn test_1() {
