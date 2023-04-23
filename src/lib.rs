@@ -1,5 +1,6 @@
 pub mod alpha_eq;
 pub mod binder;
+pub mod context;
 pub mod name;
 pub mod permutation;
 pub mod permuting;
@@ -148,7 +149,7 @@ mod test {
                         buffer.write_all(label.as_bytes()).unwrap();
                         buffer.write_all(" -> ".as_bytes()).unwrap();
 
-                        binder.fold(|name, body| {
+                        binder.fold_ref(|name, body| {
                             names.insert(name, label.clone());
                             body.print(names, buffer);
                             names.remove(&name);
@@ -246,6 +247,7 @@ mod test {
 
         use crate::{
             binder::Binder,
+            context::Context,
             name::Name,
             permutation::{Permutation, Permute},
             subst::Subst,
@@ -263,6 +265,21 @@ mod test {
             Forall(String, Kind, Box<Binder<Type>>),
             Arrow,
             App(Box<Type>, Box<Type>),
+        }
+
+        impl Type {
+            fn match_arrow(&self) -> Option<(&Type, &Type)> {
+                match self {
+                    Type::App(a, out_ty) => match a.as_ref() {
+                        Type::App(b, in_ty) => match b.as_ref() {
+                            Type::Arrow => Some((in_ty, out_ty)),
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
         }
 
         impl Permute for Type {
@@ -392,11 +409,14 @@ mod test {
             TypeVarNotInScope { variable: String },
             KindMismatch { expected_kind: Kind, got_kind: Kind },
             ExpectedArrowKind { got_kind: Kind },
+            TypeMismatch { expected_type: Type, got_type: Type },
+            ExpectedArrowType { got_type: Type },
+            ExpectedForallType { got_type: Type },
         }
 
         fn infer_kind(
-            variables: &mut HashMap<Name, String>,
-            kinds: &mut HashMap<Name, Kind>,
+            variables: &mut impl Context<Item = String>,
+            kinds: &mut impl Context<Item = Kind>,
             ty: &Type,
         ) -> Result<Kind, InferError> {
             match ty {
@@ -406,37 +426,36 @@ mod test {
                         variable: variables.get(name).unwrap().clone(),
                     }),
                 },
-                Type::Forall(var, kind, binder) => binder.fold(|name, body| {
-                    variables.insert(name, var.clone());
-                    kinds.insert(name, kind.clone());
-                    let result = infer_kind(variables, kinds, body)?;
-                    kinds.remove(&name);
-                    variables.remove(&name);
-
-                    match result {
-                        Kind::Type => Ok(Kind::Type),
-                        _ => Err(InferError::KindMismatch {
-                            expected_kind: Kind::Type,
-                            got_kind: result,
-                        }),
-                    }
+                Type::Forall(var, kind, binder) => binder.fold_ref(|name, body| {
+                    variables.with(name, var.clone(), |variables| {
+                        kinds.with(name, kind.clone(), |kinds| {
+                            let result = infer_kind(variables, kinds, body)?;
+                            match result {
+                                Kind::Type => Ok(Kind::Type),
+                                _ => Err(InferError::KindMismatch {
+                                    expected_kind: Kind::Type,
+                                    got_kind: result,
+                                }),
+                            }
+                        })
+                    })
                 }),
                 Type::Arrow => Ok(Kind::Arrow(Box::new(Kind::Type), Box::new(Kind::Type))),
                 Type::App(a, b) => {
                     let a_kind = infer_kind(variables, kinds, a)?;
-                    match a_kind {
-                        Kind::Arrow(in_kind, out_kind) => {
-                            let b_kind = infer_kind(variables, kinds, b)?;
-                            if in_kind.as_ref() == &b_kind {
-                                Ok(*out_kind)
-                            } else {
-                                Err(InferError::KindMismatch {
-                                    expected_kind: *in_kind,
-                                    got_kind: b_kind,
-                                })
-                            }
-                        }
+                    let (in_kind, out_kind) = match a_kind {
+                        Kind::Arrow(in_kind, out_kind) => Ok((in_kind, out_kind)),
                         _ => Err(InferError::ExpectedArrowKind { got_kind: a_kind }),
+                    }?;
+
+                    let b_kind = infer_kind(variables, kinds, b)?;
+                    if in_kind.as_ref() == &b_kind {
+                        Ok(*out_kind)
+                    } else {
+                        Err(InferError::KindMismatch {
+                            expected_kind: *in_kind,
+                            got_kind: b_kind,
+                        })
                     }
                 }
             }
@@ -455,25 +474,78 @@ mod test {
                         variable: variables.get(name).unwrap().clone(),
                     }),
                 },
-                Expr::Lam(var, in_ty, binder) => binder.fold(|name, body| {
-                    variables.insert(name, var.clone());
-                    types.insert(name, in_ty.clone());
-                    let out_ty = infer_type(variables, kinds, types, body)?;
-                    types.remove(&name);
-                    variables.remove(&name);
+                Expr::Lam(var, in_ty, binder) => binder.fold_ref(|name, body| {
+                    variables.with(name, var.clone(), |variables| {
+                        types.with(name, in_ty.clone(), |types| {
+                            let out_ty = infer_type(variables, kinds, types, body)?;
 
-                    Ok(Type::App(
-                        Box::new(Type::App(Box::new(Type::Arrow), Box::new(in_ty.clone()))),
-                        Box::new(out_ty),
-                    ))
+                            Ok(Type::App(
+                                Box::new(Type::App(Box::new(Type::Arrow), Box::new(in_ty.clone()))),
+                                Box::new(out_ty),
+                            ))
+                        })
+                    })
                 }),
                 Expr::App(a, b) => {
                     let a_ty = infer_type(variables, kinds, types, a)?;
                     let b_ty = infer_type(variables, kinds, types, b)?;
-                    todo!();
+
+                    let (in_ty, out_ty) = match a_ty.match_arrow() {
+                        Some(result) => Ok(result),
+                        None => Err(InferError::ExpectedArrowType {
+                            got_type: a_ty.clone(),
+                        }),
+                    }?;
+
+                    if &b_ty == in_ty {
+                        Ok(out_ty.clone())
+                    } else {
+                        Err(InferError::TypeMismatch {
+                            expected_type: in_ty.clone(),
+                            got_type: b_ty,
+                        })
+                    }
                 }
-                Expr::TyLam(_, _, _) => todo!(),
-                Expr::TyApp(_, _) => todo!(),
+                Expr::TyLam(var, kind, binder) => binder.fold_ref(|name, body| {
+                    variables.with(name, var.clone(), |variables| {
+                        kinds.with(name, kind.clone(), |kinds| {
+                            let ty = infer_type(variables, kinds, types, body)?;
+                            Ok(Type::Forall(
+                                var.clone(),
+                                kind.clone(),
+                                Box::new(Binder::new(|ty_name| {
+                                    ty.permute(&Permutation::swap(name, ty_name))
+                                })),
+                            ))
+                        })
+                    })
+                }),
+                Expr::TyApp(expr, ty) => {
+                    let expr_ty = infer_type(variables, kinds, types, expr)?;
+                    let (_var, kind, binder) = match expr_ty {
+                        Type::Forall(var, kind, binder) => Ok((var, kind, binder)),
+                        _ => Err(InferError::ExpectedForallType { got_type: expr_ty }),
+                    }?;
+
+                    let ty_kind = infer_kind(variables, kinds, ty)?;
+
+                    if kind == ty_kind {
+                        binder.fold_ref(|name, body| {
+                            Ok(body.clone().subst(&|a_name| {
+                                if a_name == name {
+                                    ty.clone()
+                                } else {
+                                    Type::name(a_name)
+                                }
+                            }))
+                        })
+                    } else {
+                        Err(InferError::KindMismatch {
+                            expected_kind: kind,
+                            got_kind: ty_kind,
+                        })
+                    }
+                }
             }
         }
     }

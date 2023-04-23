@@ -17,7 +17,7 @@ pub struct Binder<T> {
 
 impl<T: Clone + Permute> Clone for Binder<T> {
     fn clone(&self) -> Self {
-        self.fold(|name, body| {
+        self.fold_ref(|name, body| {
             Binder::new(|new_name| {
                 let mut body = body.clone();
                 body.permute_mut(&Permutation::swap(name, new_name));
@@ -107,7 +107,13 @@ impl<T> Binder<T> {
         }
     }
 
-    pub fn fold<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
+    pub fn fold<R, F: FnOnce(Name, T) -> R>(self, f: F) -> R {
+        // I think this should generate a fresh name, but it seems inconvenient
+        // to work with a `Permuting<&T>` instead of a `&T`.
+        f(self.name, self.body)
+    }
+
+    pub fn fold_ref<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
         // I think this should generate a fresh name, but it seems inconvenient
         // to work with a `Permuting<&T>` instead of a `&T`.
         f(self.name, &self.body)
