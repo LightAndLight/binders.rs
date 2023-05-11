@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashSet};
 use super::{
     alpha_eq::AlphaEq,
     name::{fresh, Name},
-    permutation::{Permutation, Permute},
+    permutation::{Permutable, Permutation},
     permuting::Permuting,
     subst::Subst,
     support::Support,
@@ -15,22 +15,22 @@ pub struct Binder<T> {
     body: T,
 }
 
-impl<T: Clone + Permute> Clone for Binder<T> {
+impl<T: Clone + Permutable> Clone for Binder<T> {
     fn clone(&self) -> Self {
         self.unbind_ref(|name, body| {
             Binder::bind(|new_name| {
                 let mut body = body.clone();
-                body.permute_mut(&Permutation::swap(name, new_name));
+                body.permute_by_mut(&Permutation::swap(name, new_name));
                 body
             })
         })
     }
 }
 
-impl<T: Permute> Permute for Binder<T> {
-    fn permute_mut(&mut self, permutation: &Permutation) {
-        self.name.permute_mut(permutation);
-        self.body.permute_mut(permutation);
+impl<T: Permutable> Permutable for Binder<T> {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
+        self.name.permute_by_mut(permutation);
+        self.body.permute_by_mut(permutation);
     }
 }
 

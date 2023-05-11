@@ -11,11 +11,11 @@ use std::collections::HashSet;
 
 use binder::Binder;
 use name::Name;
-use permutation::Permute;
+use permutation::Permutable;
 use permuting::Permuting;
 use support::Support;
 
-pub trait Nominal: Permute + Support {}
+pub trait Nominal: Permutable + Support {}
 
 impl Nominal for Name {}
 impl<T: Eq + std::hash::Hash + Nominal> Nominal for HashSet<T> {}
@@ -34,7 +34,7 @@ mod test {
             alpha_eq::AlphaEq,
             binder::Binder,
             name::Name,
-            permutation::{Permutation, Permute},
+            permutation::{Permutable, Permutation},
             permuting::Permuting,
             subst::Subst,
             support::Support,
@@ -48,16 +48,16 @@ mod test {
             App(Box<Expr>, Box<Expr>),
         }
 
-        impl Permute for Expr {
-            fn permute_mut(&mut self, permutation: &Permutation) {
+        impl Permutable for Expr {
+            fn permute_by_mut(&mut self, permutation: &Permutation) {
                 match self {
                     Expr::Var(name) => {
                         permutation.apply_mut(name);
                     }
-                    Expr::Lam(_label, binder) => binder.permute_mut(permutation),
+                    Expr::Lam(_label, binder) => binder.permute_by_mut(permutation),
                     Expr::App(a, b) => {
-                        a.permute_mut(permutation);
-                        b.permute_mut(permutation);
+                        a.permute_by_mut(permutation);
+                        b.permute_by_mut(permutation);
                     }
                 }
             }
@@ -249,7 +249,7 @@ mod test {
             binder::Binder,
             context::Context,
             name::Name,
-            permutation::{Permutation, Permute},
+            permutation::{Permutable, Permutation},
             subst::Subst,
         };
 
@@ -282,19 +282,19 @@ mod test {
             }
         }
 
-        impl Permute for Type {
-            fn permute_mut(&mut self, permutation: &Permutation) {
+        impl Permutable for Type {
+            fn permute_by_mut(&mut self, permutation: &Permutation) {
                 match self {
                     Type::Var(name) => {
-                        name.permute_mut(permutation);
+                        name.permute_by_mut(permutation);
                     }
                     Type::Forall(_name, _kind, binder) => {
-                        binder.permute_mut(permutation);
+                        binder.permute_by_mut(permutation);
                     }
                     Type::Arrow => {}
                     Type::App(a, b) => {
-                        a.permute_mut(permutation);
-                        b.permute_mut(permutation);
+                        a.permute_by_mut(permutation);
+                        b.permute_by_mut(permutation);
                     }
                 }
             }
@@ -331,22 +331,22 @@ mod test {
             TyApp(Box<Expr>, Type),
         }
 
-        impl Permute for Expr {
-            fn permute_mut(&mut self, permutation: &Permutation) {
+        impl Permutable for Expr {
+            fn permute_by_mut(&mut self, permutation: &Permutation) {
                 match self {
                     Expr::Var(name) => {
-                        name.permute_mut(permutation);
+                        name.permute_by_mut(permutation);
                     }
-                    Expr::Lam(_name, _ty, binder) => binder.permute_mut(permutation),
+                    Expr::Lam(_name, _ty, binder) => binder.permute_by_mut(permutation),
                     Expr::App(a, b) => {
-                        a.permute_mut(permutation);
-                        b.permute_mut(permutation);
+                        a.permute_by_mut(permutation);
+                        b.permute_by_mut(permutation);
                     }
                     Expr::TyLam(_name, _kind, binder) => {
-                        binder.permute_mut(permutation);
+                        binder.permute_by_mut(permutation);
                     }
                     Expr::TyApp(expr, _ty) => {
-                        expr.permute_mut(permutation);
+                        expr.permute_by_mut(permutation);
                     }
                 }
             }
@@ -514,7 +514,7 @@ mod test {
                                 var.clone(),
                                 kind.clone(),
                                 Box::new(Binder::bind(|ty_name| {
-                                    ty.permute(&Permutation::swap(name, ty_name))
+                                    ty.permute_by(&Permutation::swap(name, ty_name))
                                 })),
                             ))
                         })

@@ -79,16 +79,16 @@ impl Permutation {
     }
 }
 
-pub trait Permute: Sized {
-    fn permute_mut(&mut self, permutation: &Permutation);
+pub trait Permutable: Sized {
+    fn permute_by_mut(&mut self, permutation: &Permutation);
 
-    fn permute(mut self, permutation: &Permutation) -> Self {
-        self.permute_mut(permutation);
+    fn permute_by(mut self, permutation: &Permutation) -> Self {
+        self.permute_by_mut(permutation);
         self
     }
 
     fn swap_mut(&mut self, a: Name, b: Name) {
-        self.permute_mut(&Permutation::swap(a, b));
+        self.permute_by_mut(&Permutation::swap(a, b));
     }
 
     fn swap(mut self, a: Name, b: Name) -> Self {
@@ -97,52 +97,52 @@ pub trait Permute: Sized {
     }
 }
 
-impl Permute for Permutation {
-    fn permute_mut(&mut self, permutation: &Permutation) {
+impl Permutable for Permutation {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
         self.value.values_mut().for_each(&|name| {
             permutation.apply_mut(name);
         });
     }
 }
 
-impl Permute for Name {
-    fn permute_mut(&mut self, permutation: &Permutation) {
+impl Permutable for Name {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
         permutation.apply_mut(self);
     }
 }
 
-impl<A: Permute, B: Permute> Permute for (A, B) {
-    fn permute_mut(&mut self, permutation: &Permutation) {
-        self.0.permute_mut(permutation);
-        self.1.permute_mut(permutation);
+impl<A: Permutable, B: Permutable> Permutable for (A, B) {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
+        self.0.permute_by_mut(permutation);
+        self.1.permute_by_mut(permutation);
     }
 }
 
-impl<A: Permute, B: Permute> Permute for Either<A, B> {
-    fn permute_mut(&mut self, permutation: &Permutation) {
+impl<A: Permutable, B: Permutable> Permutable for Either<A, B> {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
         match self {
             Either::Left(left) => {
-                left.permute_mut(permutation);
+                left.permute_by_mut(permutation);
             }
             Either::Right(right) => {
-                right.permute_mut(permutation);
+                right.permute_by_mut(permutation);
             }
         }
     }
 }
 
-impl<T: Eq + std::hash::Hash + Permute> Permute for HashSet<T> {
-    fn permute_mut(&mut self, permutation: &Permutation) {
+impl<T: Eq + std::hash::Hash + Permutable> Permutable for HashSet<T> {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
         let names = std::mem::take(self);
         names.into_iter().for_each(|mut value| {
-            value.permute_mut(permutation);
+            value.permute_by_mut(permutation);
             self.insert(value);
         });
     }
 }
 
-impl<T: Permute> Permute for Box<T> {
-    fn permute_mut(&mut self, permutation: &Permutation) {
-        self.as_mut().permute_mut(permutation)
+impl<T: Permutable> Permutable for Box<T> {
+    fn permute_by_mut(&mut self, permutation: &Permutation) {
+        self.as_mut().permute_by_mut(permutation)
     }
 }
