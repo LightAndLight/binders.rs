@@ -6,7 +6,7 @@ use super::{
     permutation::{Permutable, Permutation},
     permuting::Permuting,
     subst::Subst,
-    support::Support,
+    support::Supported,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl<V, T: Subst<V>> Subst<V> for Binder<T> {
     }
 }
 
-impl<T: Support> Support for Binder<T> {
+impl<T: Supported> Supported for Binder<T> {
     fn support(&self) -> HashSet<Name> {
         let mut support = self.body.support();
         support.remove(&self.name);

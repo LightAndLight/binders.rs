@@ -13,9 +13,9 @@ use binder::Binder;
 use name::Name;
 use permutation::Permutable;
 use permuting::Permuting;
-use support::Support;
+use support::Supported;
 
-pub trait Nominal: Permutable + Support {}
+pub trait Nominal: Permutable + Supported {}
 
 impl Nominal for Name {}
 impl<T: Eq + std::hash::Hash + Nominal> Nominal for HashSet<T> {}
@@ -37,7 +37,7 @@ mod test {
             permutation::{Permutable, Permutation},
             permuting::Permuting,
             subst::Subst,
-            support::Support,
+            support::Supported,
             Nominal,
         };
 
@@ -82,7 +82,7 @@ mod test {
             }
         }
 
-        impl Support for Expr {
+        impl Supported for Expr {
             fn support(&self) -> HashSet<Name> {
                 match self {
                     Expr::Var(name) => HashSet::from([*name]),

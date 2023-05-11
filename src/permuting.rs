@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashSet};
 use super::{
     name::Name,
     permutation::{Permutable, Permutation},
-    support::Support,
+    support::Supported,
 };
 
 pub struct Permuting<'a, T> {
@@ -26,7 +26,7 @@ impl<'a, T: Permutable> Permutable for Permuting<'a, T> {
     }
 }
 
-impl<'a, T: Support> Support for Permuting<'a, T> {
+impl<'a, T: Supported> Supported for Permuting<'a, T> {
     fn support(&self) -> HashSet<Name> {
         let mut support = self.value.support();
         support.permute_by_mut(&self.permutation);
