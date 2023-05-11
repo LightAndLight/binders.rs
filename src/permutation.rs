@@ -99,9 +99,7 @@ pub trait Permutable: Sized {
 
 impl Permutable for Permutation {
     fn permute_by_mut(&mut self, permutation: &Permutation) {
-        self.value.values_mut().for_each(&|name| {
-            permutation.apply_mut(name);
-        });
+        permutation.after_mut(self)
     }
 }
 

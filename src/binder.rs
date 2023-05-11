@@ -83,13 +83,17 @@ impl<T: AlphaEq> AlphaEq for Binder<T> {
             T::alpha_eq_under(
                 Permuting {
                     permutation: Cow::Owned(
-                        Permutation::swap(actual_a, name).after(a.permutation.into_owned()),
+                        a.permutation
+                            .into_owned()
+                            .permute_by(&Permutation::swap(actual_a, name)),
                     ),
                     value: &a.value.body,
                 },
                 Permuting {
                     permutation: Cow::Owned(
-                        Permutation::swap(actual_b, name).after(b.permutation.into_owned()),
+                        b.permutation
+                            .into_owned()
+                            .permute_by(&Permutation::swap(actual_b, name)),
                     ),
                     value: &b.value.body,
                 },
@@ -114,6 +118,17 @@ impl<T> Binder<T> {
     pub fn unbind_ref<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
         f(self.name, &self.body)
     }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Binder<U> {
+        Binder {
+            name: self.name,
+            body: f(self.body),
+        }
+    }
+
+    pub fn map_mut(&mut self, f: impl FnOnce(&mut T)) {
+        f(&mut self.body)
+    }
 }
 
 #[cfg(test)]
@@ -126,6 +141,11 @@ mod test {
         let binder1 = Binder::bind(|name| name);
         let binder2 = Binder::bind(|name| name);
 
-        assert!(binder1.alpha_eq(&binder2));
+        assert!(
+            binder1.alpha_eq(&binder2),
+            "{:?} not alpha equivalent to {:?}",
+            binder1,
+            binder2
+        );
     }
 }

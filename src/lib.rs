@@ -7,21 +7,6 @@ pub mod permuting;
 pub mod subst;
 pub mod support;
 
-use std::collections::HashSet;
-
-use binder::Binder;
-use name::Name;
-use permutation::Permutable;
-use permuting::Permuting;
-use support::Supported;
-
-pub trait Nominal: Permutable + Supported {}
-
-impl Nominal for Name {}
-impl<T: Eq + std::hash::Hash + Nominal> Nominal for HashSet<T> {}
-impl<T: Nominal> Nominal for Binder<T> {}
-impl<'a, T: Nominal> Nominal for Permuting<'a, T> {}
-
 #[cfg(test)]
 mod test {
     mod lambda_calculus {
@@ -33,18 +18,18 @@ mod test {
         use crate::{
             alpha_eq::AlphaEq,
             binder::Binder,
+            context::Context,
             name::Name,
             permutation::{Permutable, Permutation},
             permuting::Permuting,
             subst::Subst,
             support::Supported,
-            Nominal,
         };
 
         #[derive(Debug, PartialEq, Eq)]
         enum Expr {
             Var(Name),
-            Lam(String, Box<Binder<Expr>>),
+            Lam(String, Binder<Box<Expr>>),
             App(Box<Expr>, Box<Expr>),
         }
 
@@ -58,6 +43,20 @@ mod test {
                     Expr::App(a, b) => {
                         a.permute_by_mut(permutation);
                         b.permute_by_mut(permutation);
+                    }
+                }
+            }
+        }
+
+        impl Supported for Expr {
+            fn support(&self) -> HashSet<Name> {
+                match self {
+                    Expr::Var(name) => HashSet::from([*name]),
+                    Expr::Lam(_label, binder) => binder.support(),
+                    Expr::App(a, b) => {
+                        let mut support = a.support();
+                        support.extend(b.support());
+                        support
                     }
                 }
             }
@@ -81,22 +80,6 @@ mod test {
                 }
             }
         }
-
-        impl Supported for Expr {
-            fn support(&self) -> HashSet<Name> {
-                match self {
-                    Expr::Var(name) => HashSet::from([*name]),
-                    Expr::Lam(_label, binder) => binder.support(),
-                    Expr::App(a, b) => {
-                        let mut support = a.support();
-                        support.extend(b.support());
-                        support
-                    }
-                }
-            }
-        }
-
-        impl Nominal for Expr {}
 
         impl AlphaEq for Expr {
             fn alpha_eq_under(a: Permuting<&Expr>, b: Permuting<&Expr>) -> bool {
@@ -139,7 +122,7 @@ mod test {
         }
 
         impl Expr {
-            fn print(&self, names: &mut HashMap<Name, String>, buffer: &mut dyn Write) {
+            fn print(&self, names: &mut impl Context<Item = String>, buffer: &mut dyn Write) {
                 match self {
                     Expr::Var(name) => buffer
                         .write_all(names.get(name).unwrap().as_bytes())
@@ -150,9 +133,9 @@ mod test {
                         buffer.write_all(" -> ".as_bytes()).unwrap();
 
                         binder.unbind_ref(|name, body| {
-                            names.insert(name, label.clone());
-                            body.print(names, buffer);
-                            names.remove(&name);
+                            names.with(name, label.clone(), |names| {
+                                body.print(names, buffer);
+                            });
                         });
                     }
                     Expr::App(a, b) => {
@@ -176,8 +159,8 @@ mod test {
 
         #[test]
         fn test_1() {
-            let expr1 = Expr::Lam(String::from("x"), Box::new(Binder::bind(Expr::Var)));
-            let expr2 = Expr::Lam(String::from("y"), Box::new(Binder::bind(Expr::Var)));
+            let expr1 = Expr::Lam(String::from("x"), Binder::bind(|x| Box::new(Expr::Var(x))));
+            let expr2 = Expr::Lam(String::from("y"), Binder::bind(|y| Box::new(Expr::Var(y))));
 
             assert!(expr1.alpha_eq(&expr2));
         }
@@ -187,18 +170,24 @@ mod test {
             // \x -> \y -> x
             let expr1 = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::bind(|x| {
-                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|_y| Expr::Var(x))))
-                })),
+                Binder::bind(|x| {
+                    Box::new(Expr::Lam(
+                        String::from("y"),
+                        Binder::bind(|_y| Box::new(Expr::Var(x))),
+                    ))
+                }),
             );
 
             // \x -> \y -> y
             let expr2 = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::bind(|_x| {
+                Binder::bind(|_x| {
                     #[allow(clippy::redundant_closure)]
-                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|y| Expr::Var(y))))
-                })),
+                    Box::new(Expr::Lam(
+                        String::from("y"),
+                        Binder::bind(|y| Box::new(Expr::Var(y))),
+                    ))
+                }),
             );
 
             assert!(!expr1.alpha_eq(&expr2));
@@ -209,17 +198,23 @@ mod test {
             // \x -> \y -> x
             let expr1 = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::bind(|x| {
-                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|_y| Expr::Var(x))))
-                })),
+                Binder::bind(|x| {
+                    Box::new(Expr::Lam(
+                        String::from("y"),
+                        Binder::bind(|_y| Box::new(Expr::Var(x))),
+                    ))
+                }),
             );
 
             // \y -> \x -> y
             let expr2 = Expr::Lam(
                 String::from("y"),
-                Box::new(Binder::bind(|y| {
-                    Expr::Lam(String::from("x"), Box::new(Binder::bind(|_x| Expr::Var(y))))
-                })),
+                Binder::bind(|y| {
+                    Box::new(Expr::Lam(
+                        String::from("x"),
+                        Binder::bind(|_x| Box::new(Expr::Var(y))),
+                    ))
+                }),
             );
 
             assert!(expr1.alpha_eq(&expr2));
@@ -230,9 +225,12 @@ mod test {
             // \x -> \y -> x
             let expr = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::bind(|x| {
-                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|_y| Expr::Var(x))))
-                })),
+                Binder::bind(|x| {
+                    Box::new(Expr::Lam(
+                        String::from("y"),
+                        Binder::bind(|_y| Box::new(Expr::Var(x))),
+                    ))
+                }),
             );
 
             let mut names = HashMap::new();
@@ -246,10 +244,12 @@ mod test {
         use std::collections::HashMap;
 
         use crate::{
+            alpha_eq::{Alpha, AlphaEq},
             binder::Binder,
             context::Context,
             name::Name,
             permutation::{Permutable, Permutation},
+            permuting::Permuting,
             subst::Subst,
         };
 
@@ -259,15 +259,28 @@ mod test {
             Arrow(Box<Kind>, Box<Kind>),
         }
 
+        impl Kind {
+            fn arrow(a: Kind, b: Kind) -> Self {
+                Kind::Arrow(Box::new(a), Box::new(b))
+            }
+        }
+
         #[derive(Debug, PartialEq, Eq, Clone)]
         enum Type {
             Var(Name),
-            Forall(String, Kind, Box<Binder<Type>>),
+            Forall(String, Kind, Binder<Box<Type>>),
             Arrow,
             App(Box<Type>, Box<Type>),
         }
 
         impl Type {
+            fn arrow(a: Type, b: Type) -> Self {
+                Type::App(
+                    Box::new(Type::App(Box::new(Type::Arrow), Box::new(a))),
+                    Box::new(b),
+                )
+            }
+
             fn match_arrow(&self) -> Option<(&Type, &Type)> {
                 match self {
                     Type::App(a, out_ty) => match a.as_ref() {
@@ -322,12 +335,49 @@ mod test {
             }
         }
 
+        impl AlphaEq for Type {
+            fn alpha_eq_under(a: Permuting<&Self>, b: Permuting<&Self>) -> bool {
+                match (a.value, b.value) {
+                    (Type::Var(var1), Type::Var(var2)) => {
+                        var1.permute_by(&a.permutation) == var2.permute_by(&b.permutation)
+                    }
+                    (Type::Forall(_, kind1, body1), Type::Forall(_, kind2, body2)) => {
+                        kind1 == kind2
+                            && AlphaEq::alpha_eq_under(
+                                Permuting {
+                                    permutation: a.permutation,
+                                    value: body1,
+                                },
+                                Permuting {
+                                    permutation: b.permutation,
+                                    value: body2,
+                                },
+                            )
+                    }
+                    (Type::Arrow, Type::Arrow) => true,
+                    (Type::App(left1, right1), Type::App(left2, right2)) => {
+                        AlphaEq::alpha_eq_under(
+                            Permuting {
+                                permutation: a.permutation,
+                                value: &(left1, right1),
+                            },
+                            Permuting {
+                                permutation: b.permutation,
+                                value: &(left2, right2),
+                            },
+                        )
+                    }
+                    _ => false,
+                }
+            }
+        }
+
         #[derive(Debug, PartialEq, Eq, Clone)]
         enum Expr {
             Var(Name),
-            Lam(String, Type, Box<Binder<Expr>>),
+            Lam(String, Type, Binder<Box<Expr>>),
             App(Box<Expr>, Box<Expr>),
-            TyLam(String, Kind, Box<Binder<Expr>>),
+            TyLam(String, Kind, Binder<Box<Expr>>),
             TyApp(Box<Expr>, Type),
         }
 
@@ -404,6 +454,7 @@ mod test {
             }
         }
 
+        #[derive(Debug, PartialEq, Eq)]
         enum InferError {
             VarNotInScope { variable: String },
             TypeVarNotInScope { variable: String },
@@ -477,6 +528,15 @@ mod test {
                 Expr::Lam(var, in_ty, binder) => binder.unbind_ref(|name, body| {
                     variables.with(name, var.clone(), |variables| {
                         types.with(name, in_ty.clone(), |types| {
+                            let in_ty_kind = infer_kind(variables, kinds, in_ty)?;
+                            match in_ty_kind {
+                                Kind::Type => Ok(()),
+                                _ => Err(InferError::KindMismatch {
+                                    expected_kind: Kind::Type,
+                                    got_kind: in_ty_kind,
+                                }),
+                            }?;
+
                             let out_ty = infer_type(variables, kinds, types, body)?;
 
                             Ok(Type::App(
@@ -513,9 +573,9 @@ mod test {
                             Ok(Type::Forall(
                                 var.clone(),
                                 kind.clone(),
-                                Box::new(Binder::bind(|ty_name| {
-                                    ty.permute_by(&Permutation::swap(name, ty_name))
-                                })),
+                                Binder::bind(|ty_name| {
+                                    Box::new(ty.permute_by(&Permutation::swap(name, ty_name)))
+                                }),
                             ))
                         })
                     })
@@ -530,8 +590,8 @@ mod test {
                     let ty_kind = infer_kind(variables, kinds, ty)?;
 
                     if kind == ty_kind {
-                        binder.unbind_ref(|name, body| {
-                            Ok(body.clone().subst(&|a_name| {
+                        binder.unbind(|name, body| {
+                            Ok((*body).subst(&|a_name| {
                                 if a_name == name {
                                     ty.clone()
                                 } else {
@@ -547,6 +607,67 @@ mod test {
                     }
                 }
             }
+        }
+
+        #[test]
+        fn test_1() {
+            let mut variables = HashMap::new();
+            let mut kinds = HashMap::new();
+            let mut types = HashMap::new();
+
+            // forall (a : Type). \(x : a) -> x
+            let expr = Expr::TyLam(
+                "a".to_string(),
+                Kind::Type,
+                Binder::bind(|a| {
+                    Box::new(Expr::Lam(
+                        "x".to_string(),
+                        Type::Var(a),
+                        Binder::bind(|x| Box::new(Expr::Var(x))),
+                    ))
+                }),
+            );
+
+            let result = infer_type(&mut variables, &mut kinds, &mut types, &expr);
+
+            assert_eq!(
+                result.map(Alpha),
+                Ok(Alpha(Type::Forall(
+                    "a".to_string(),
+                    Kind::Type,
+                    Binder::bind(|a| Box::new(Type::arrow(Type::Var(a), Type::Var(a)))),
+                ))),
+            )
+        }
+
+        #[test]
+        fn test_2() {
+            let mut variables = HashMap::new();
+            let mut kinds = HashMap::new();
+            let mut types = HashMap::new();
+
+            // forall (a : Type -> Type). \(x : a) -> x
+            let expr = Expr::TyLam(
+                "a".to_string(),
+                Kind::arrow(Kind::Type, Kind::Type),
+                Binder::bind(|a| {
+                    Box::new(Expr::Lam(
+                        "x".to_string(),
+                        Type::Var(a),
+                        Binder::bind(|x| Box::new(Expr::Var(x))),
+                    ))
+                }),
+            );
+
+            let result = infer_type(&mut variables, &mut kinds, &mut types, &expr);
+
+            assert_eq!(
+                result.map(Alpha),
+                Err(InferError::KindMismatch {
+                    expected_kind: Kind::Type,
+                    got_kind: Kind::arrow(Kind::Type, Kind::Type)
+                }),
+            )
         }
     }
 }

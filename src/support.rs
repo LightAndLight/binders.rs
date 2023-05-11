@@ -21,3 +21,9 @@ impl<T: Eq + std::hash::Hash + Supported> Supported for HashSet<T> {
         })
     }
 }
+
+impl<T: Supported> Supported for Box<T> {
+    fn support(&self) -> HashSet<Name> {
+        self.as_ref().support()
+    }
+}

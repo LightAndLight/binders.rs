@@ -1,8 +1,6 @@
 use std::borrow::Cow;
 
-use crate::name::Name;
-
-use super::Permuting;
+use crate::{name::Name, permuting::Permuting};
 
 pub trait AlphaEq {
     fn alpha_eq_under(a: Permuting<&Self>, b: Permuting<&Self>) -> bool;
@@ -103,3 +101,18 @@ mod test {
         ));
     }
 }
+
+/** A wrapper that uses alpha equality ([`alpha_eq`]) for equality (`==`).
+
+`Alpha(a) == Alpha(b)` means `a.alpha_eq(b)`.
+*/
+#[derive(Debug)]
+pub struct Alpha<T>(pub T);
+
+impl<T: AlphaEq> PartialEq for Alpha<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.alpha_eq(&other.0)
+    }
+}
+
+impl<T: AlphaEq> Eq for Alpha<T> {}
