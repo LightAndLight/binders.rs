@@ -17,8 +17,8 @@ pub struct Binder<T> {
 
 impl<T: Clone + Permute> Clone for Binder<T> {
     fn clone(&self) -> Self {
-        self.fold_ref(|name, body| {
-            Binder::new(|new_name| {
+        self.unbind_ref(|name, body| {
+            Binder::bind(|new_name| {
                 let mut body = body.clone();
                 body.permute_mut(&Permutation::swap(name, new_name));
                 body
@@ -99,7 +99,7 @@ impl<T: AlphaEq> AlphaEq for Binder<T> {
 }
 
 impl<T> Binder<T> {
-    pub fn new(f: impl FnOnce(Name) -> T) -> Binder<T> {
+    pub fn bind(f: impl FnOnce(Name) -> T) -> Binder<T> {
         let name = fresh();
         Binder {
             name,
@@ -107,15 +107,11 @@ impl<T> Binder<T> {
         }
     }
 
-    pub fn fold<R, F: FnOnce(Name, T) -> R>(self, f: F) -> R {
-        // I think this should generate a fresh name, but it seems inconvenient
-        // to work with a `Permuting<&T>` instead of a `&T`.
+    pub fn unbind<R, F: FnOnce(Name, T) -> R>(self, f: F) -> R {
         f(self.name, self.body)
     }
 
-    pub fn fold_ref<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
-        // I think this should generate a fresh name, but it seems inconvenient
-        // to work with a `Permuting<&T>` instead of a `&T`.
+    pub fn unbind_ref<R, F: FnOnce(Name, &T) -> R>(&self, f: F) -> R {
         f(self.name, &self.body)
     }
 }
@@ -127,8 +123,8 @@ mod test {
 
     #[test]
     fn test_1() {
-        let binder1 = Binder::new(|name| name);
-        let binder2 = Binder::new(|name| name);
+        let binder1 = Binder::bind(|name| name);
+        let binder2 = Binder::bind(|name| name);
 
         assert!(binder1.alpha_eq(&binder2));
     }

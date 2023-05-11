@@ -149,7 +149,7 @@ mod test {
                         buffer.write_all(label.as_bytes()).unwrap();
                         buffer.write_all(" -> ".as_bytes()).unwrap();
 
-                        binder.fold_ref(|name, body| {
+                        binder.unbind_ref(|name, body| {
                             names.insert(name, label.clone());
                             body.print(names, buffer);
                             names.remove(&name);
@@ -176,8 +176,8 @@ mod test {
 
         #[test]
         fn test_1() {
-            let expr1 = Expr::Lam(String::from("x"), Box::new(Binder::new(Expr::Var)));
-            let expr2 = Expr::Lam(String::from("y"), Box::new(Binder::new(Expr::Var)));
+            let expr1 = Expr::Lam(String::from("x"), Box::new(Binder::bind(Expr::Var)));
+            let expr2 = Expr::Lam(String::from("y"), Box::new(Binder::bind(Expr::Var)));
 
             assert!(expr1.alpha_eq(&expr2));
         }
@@ -187,17 +187,17 @@ mod test {
             // \x -> \y -> x
             let expr1 = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::new(|x| {
-                    Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+                Box::new(Binder::bind(|x| {
+                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|_y| Expr::Var(x))))
                 })),
             );
 
             // \x -> \y -> y
             let expr2 = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::new(|_x| {
+                Box::new(Binder::bind(|_x| {
                     #[allow(clippy::redundant_closure)]
-                    Expr::Lam(String::from("y"), Box::new(Binder::new(|y| Expr::Var(y))))
+                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|y| Expr::Var(y))))
                 })),
             );
 
@@ -209,16 +209,16 @@ mod test {
             // \x -> \y -> x
             let expr1 = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::new(|x| {
-                    Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+                Box::new(Binder::bind(|x| {
+                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|_y| Expr::Var(x))))
                 })),
             );
 
             // \y -> \x -> y
             let expr2 = Expr::Lam(
                 String::from("y"),
-                Box::new(Binder::new(|y| {
-                    Expr::Lam(String::from("x"), Box::new(Binder::new(|_x| Expr::Var(y))))
+                Box::new(Binder::bind(|y| {
+                    Expr::Lam(String::from("x"), Box::new(Binder::bind(|_x| Expr::Var(y))))
                 })),
             );
 
@@ -230,8 +230,8 @@ mod test {
             // \x -> \y -> x
             let expr = Expr::Lam(
                 String::from("x"),
-                Box::new(Binder::new(|x| {
-                    Expr::Lam(String::from("y"), Box::new(Binder::new(|_y| Expr::Var(x))))
+                Box::new(Binder::bind(|x| {
+                    Expr::Lam(String::from("y"), Box::new(Binder::bind(|_y| Expr::Var(x))))
                 })),
             );
 
@@ -426,7 +426,7 @@ mod test {
                         variable: variables.get(name).unwrap().clone(),
                     }),
                 },
-                Type::Forall(var, kind, binder) => binder.fold_ref(|name, body| {
+                Type::Forall(var, kind, binder) => binder.unbind_ref(|name, body| {
                     variables.with(name, var.clone(), |variables| {
                         kinds.with(name, kind.clone(), |kinds| {
                             let result = infer_kind(variables, kinds, body)?;
@@ -474,7 +474,7 @@ mod test {
                         variable: variables.get(name).unwrap().clone(),
                     }),
                 },
-                Expr::Lam(var, in_ty, binder) => binder.fold_ref(|name, body| {
+                Expr::Lam(var, in_ty, binder) => binder.unbind_ref(|name, body| {
                     variables.with(name, var.clone(), |variables| {
                         types.with(name, in_ty.clone(), |types| {
                             let out_ty = infer_type(variables, kinds, types, body)?;
@@ -506,14 +506,14 @@ mod test {
                         })
                     }
                 }
-                Expr::TyLam(var, kind, binder) => binder.fold_ref(|name, body| {
+                Expr::TyLam(var, kind, binder) => binder.unbind_ref(|name, body| {
                     variables.with(name, var.clone(), |variables| {
                         kinds.with(name, kind.clone(), |kinds| {
                             let ty = infer_type(variables, kinds, types, body)?;
                             Ok(Type::Forall(
                                 var.clone(),
                                 kind.clone(),
-                                Box::new(Binder::new(|ty_name| {
+                                Box::new(Binder::bind(|ty_name| {
                                     ty.permute(&Permutation::swap(name, ty_name))
                                 })),
                             ))
@@ -530,7 +530,7 @@ mod test {
                     let ty_kind = infer_kind(variables, kinds, ty)?;
 
                     if kind == ty_kind {
-                        binder.fold_ref(|name, body| {
+                        binder.unbind_ref(|name, body| {
                             Ok(body.clone().subst(&|a_name| {
                                 if a_name == name {
                                     ty.clone()
