@@ -1,5 +1,5 @@
 [package]
-name = "nominal-sets"
+name = "binders"
 version = "0.1.0"
 edition = "2021"
 
